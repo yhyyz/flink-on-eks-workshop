@@ -42,7 +42,8 @@
 #### build
 ```sh
 mvn clean package -Dscope.type=provided
-
+#编译好的JAR
+https://dxs9dnjebzm6y.cloudfront.net/tmp/flink-cdc-msk-1.0-SNAPSHOT-202404100935.jar
 ```
    
 #### EMR on EKS
