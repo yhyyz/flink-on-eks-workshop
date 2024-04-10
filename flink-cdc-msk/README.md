@@ -34,9 +34,6 @@
 # max.request.size 默认1MB,这里设置的10MB
 -kafka_properties 'max.request.size=1073741824,xxxx=xxxx' # kafka生产者参数,多个以逗号分隔
 -chunk_size 8090 # 默认值8096，全量阶段如果表比较大，表的单行数据比较大，产生OOM时，可以调小该值
-
-# KDA Console参数与之相同，去掉参数前的-即可 
-# KDA种的参数组ID为: FlinkAppProperties
 ```
 
 #### build
