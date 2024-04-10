@@ -48,37 +48,74 @@ https://dxs9dnjebzm6y.cloudfront.net/tmp/flink-cdc-msk-1.0-SNAPSHOT-202404100935
    
 #### EMR on EKS
 * EMR 6.15.0 Flink 1.17.1
-##### run job
-```sh
-wget https://dxs9dnjebzm6y.cloudfront.net/tmp/flink-cdc-msk-1.0-SNAPSHOT-202310101435.jar
-
-s3_bucket_name="panchao-data"
-sudo flink run -s s3://${s3_bucket_name}/flink/checkpoint/test/eb2bebad3cc51afd83183a8b38a927a6/chk-3/  -m yarn-cluster  -yjm 1024 -ytm 2048 -d -ys 4  \
--c  com.aws.analytics.emr.MySQLCDC2AWSMSK \
-/home/hadoop/flink-cdc-msk-1.0-SNAPSHOT-202310101435.jar \
--project_env prod \
--disable_chaining true \
--delivery_guarantee at_least_once \
--host ssa-panchao-db.cojrbrhcpw9s.us-east-1.rds.amazonaws.com:3306 \
--username ssa \
--password Ssa123456 \
--db_list test_db \
--tb_list test_db.product.* \
--server_id 200200-200300 \
--server_time_zone Etc/GMT \
--position timestamp:1688204585000 \
--kafka_broker b-1.commonmskpanchao.wp46nn.c9.kafka.us-east-1.amazonaws.com:9092 \
--topic test-cdc-1 \
--table_pk '[{\"db\":\"cdc_db_02\",\"table\":\"sbtest2\",\"primary_key\":\"id\"},{\"db\":\"test_db\",\"table\":\"product\",\"primary_key\":\"id\",\"column_max_length\":\"name=3\"}]'  \
--checkpoint_interval 30 \
--checkpoint_dir s3://${s3_bucket_name}/flink/checkpoint/test/ \
--parallel 4 \
--kafka_properties 'max.request.size=1073741824' 
--chunk_size 8090 # 默认值8096，全量阶段如果表比较大，表的单行数据比较大，产生OOM时，可以调小该值
-# max.request.size 默认1MB,这里设置的10MB
-
-# 如果从savepoint或者checkpoint恢复作业，flink run -s 参数指定savepoint或者最后一次checkpoint目录
-# eg: s3://${s3_bucket_name}/flink/checkpoint/test/eb2bebad3cc51afd83183a8b38a927a6/chk-3/
-# 手动触发savepoint
-# eg: flink savepoint bfee56b39a69f654b4b444510581327b  s3://${s3_bucket_name}/flink/savepoint/ -yid application_1672837624250_0011
+##### flink operator
+```yaml
+apiVersion: flink.apache.org/v1beta1
+kind: FlinkDeployment
+metadata:
+  name: flink-cdc-operator
+spec:
+  flinkConfiguration:
+    taskmanager.numberOfTaskSlots: "2"
+    state.checkpoints.dir: $CHECKPOINT_S3_STORAGE_PATH
+    state.savepoints.dir: $SAVEPOINT_S3_STORAGE_PATH 
+  flinkVersion: v1_17
+  executionRoleArn: $EMR_EXECUTION_ROLE_ARN
+  emrReleaseLabel: "emr-6.15.0-flink-latest"
+  jobManager:
+    storageDir: $HIGH_AVAILABILITY_STORAGE_PATH
+    highAvailabilityEnabled: true
+    resource:
+      memory: "2048m"
+      cpu: 1
+  taskManager:
+    resource:
+      memory: "2048m"
+      cpu: 1
+  job:
+    jarURI: $FLINK_CDC_JOB_JAR
+    entryClass:  com.aws.analytics.MySQLCDC2AWSMSK
+    args:
+      - "-project_env"
+      - "prod"
+      - "-disable_chaining"
+      - "true"
+      - "-delivery_guarantee"
+      - "at_least_once"
+      - "-host"
+      - "$MYSQL_HOST:3306"
+      - "-username"
+      - "$MYSQL_USER"
+      - "-password"
+      - "$MYSQL_PWD"
+      - "-db_list"
+      - "sbtest"
+      - "-tb_list"
+      - "sbtest.sbtest.*"
+      - "-server_id"
+      - "200200-200300"
+      - "-server_time_zone"
+      - "US/Eastern"
+      - "-kafka_broker"
+      - "$MSK_BROKER"
+      - "-topic"
+      - "${CDC_TOPIC_NAME}"
+      - "-table_pk"
+      - "[{\"db\":\"sbtest\",\"table\":\"sbtest1\",\"primary_key\":\"id\"}]"
+      - "-checkpoint_interval"
+      - "30"
+      - "-checkpoint_dir"
+      - "s3://${BUCKET_NAME}/flink/checkpoint/test/"
+      - "-parallel"
+      - "4"
+      - "-kafka_properties"
+      - "max.request.size=1073741824"
+      - "-chunk_size"
+      - "8090"
+    parallelism: 2
+    upgradeMode: savepoint
+    savepointTriggerNonce: 0
+  monitoringConfiguration:
+    cloudWatchMonitoringConfiguration:
+       logGroupName: $LOG_GROUP_NAME
 ```
