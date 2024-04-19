@@ -1,5 +1,5 @@
 ARG EMR_VERSION
-FROM public.ecr.aws/emr-on-eks/flink/emr-\${EMR_VERSION}-flink:latest
+FROM public.ecr.aws/emr-on-eks/flink/emr-${EMR_VERSION}-flink:latest
 USER root
 ARG FLINK_VERSION="1.17.1"
 ENV FLINK_HOME="/usr/lib/flink/"
