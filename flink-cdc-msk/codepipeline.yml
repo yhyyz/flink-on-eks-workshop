@@ -1,0 +1,357 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: CloudFormation template to deploy a CodePipeline with CodeBuild stages to build Docker images for x86 and ARM architectures
+
+Parameters:
+  PipelineName:
+        Description: the name of current pipeline
+        Default: master
+        Type: String
+  BrancherName:
+        Description: the branch of current pipeline
+        Default: master
+        Type: String
+  SourceCodeBucketName:
+        Description: the source code bucket for code commit repo
+        Type: String
+  KeyName:
+        Description: the object key name
+        Default: README.zip
+        Type: String
+
+
+Resources:
+# 2.创建codecommit repo 
+  ApplicationRepository:
+    Type: AWS::CodeCommit::Repository 
+    Properties:
+      RepositoryName: codecommit-Repo
+      RepositoryDescription: Application code
+      Code:
+        BranchName: !Ref 'BrancherName'
+        S3: 
+          Bucket: !Ref 'SourceCodeBucketName'
+          Key: !Ref 'KeyName'
+
+
+#3. 创建codebuild service role -ok
+  CodeBuildServiceRole: 
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      Path: /
+      RoleName: CodeBuild-ServiceRole
+
+
+  CodeBuildPolicy:
+    Description: Setting IAM policy for service role for CodeBuild
+    Properties:
+      PolicyDocument:
+        Statement:
+        - Action:
+          - logs:CreateLogGroup
+          - logs:CreateLogStream
+          - logs:PutLogEvents
+          Effect: Allow
+          Resource: '*'
+        - Action:
+          - s3:PutObject
+          - s3:GetObject
+          - s3:GetObjectVersion
+          - s3:GetBucketAcl
+          - s3:GetBucketLocation
+          Effect: Allow
+          Resource: '*'
+        - Action:
+          - ecr:GetAuthorizationToken
+          - ecr:BatchCheckLayerAvailability
+          - ecr:GetDownloadUrlForLayer
+          - ecr:GetRepositoryPolicy
+          - ecr:DescribeRepositories
+          - ecr:ListImages
+          - ecr:DescribeImages
+          - ecr:BatchGetImage
+          - ecr:GetLifecyclePolicy
+          - ecr:GetLifecyclePolicyPreview
+          - ecr:ListTagsForResource
+          - ecr:DescribeImageScanFindings
+          - ecr:InitiateLayerUpload
+          - ecr:UploadLayerPart
+          - ecr:CompleteLayerUpload
+          - ecr:PutImage
+          Effect: Allow
+          Resource: "*"
+        - Action:
+          - codecommit:GitPull
+          Effect: Allow
+          Resource: !GetAtt ApplicationRepository.Arn
+        - Action:
+          - kms:GenerateDataKey*
+          - kms:Encrypt
+          - kms:Decrypt
+          Effect: Allow
+          Resource: '*'
+      PolicyName: CodeBuild-ServiceRole-Policy
+      Roles:
+      - !Ref CodeBuildServiceRole
+    Type: AWS::IAM::Policy
+
+
+  #4.1 创建codebuild x86 project            
+  DockerBuildX86Project:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: DockerBuild_x86
+      ServiceRole: !GetAtt CodeBuildServiceRole.Arn
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/amazonlinux2-x86_64-standard:3.0
+        ImagePullCredentialsType: CODEBUILD
+        PrivilegedMode: true
+        Type: LINUX_CONTAINER
+        EnvironmentVariables:
+          - Name: AWS_ACCOUNT_ID
+            Type: PLAINTEXT
+            Value: !Ref AWS::AccountId
+          - Name: AWS_DEFAULT_REGION
+            Type: PLAINTEXT
+            Value: !Ref AWS::Region
+      Source:
+        Type: CODEPIPELINE 
+        BuildSpec: x86-buildspec.yml
+      Cache:
+        Type: NO_CACHE
+      Artifacts: 
+        EncryptionDisabled: false
+        Name: X86-build
+        Packaging: "NONE"
+        Type: "CODEPIPELINE"
+
+  #4.2 创建codebuild arm64 project          
+  DockerBuildARM64Project:
+    Type: AWS::CodeBuild::Project
+    Properties:  
+      Name: DockerBuild_ARM64
+      ServiceRole: !GetAtt CodeBuildServiceRole.Arn
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL  
+        Image: aws/codebuild/amazonlinux2-aarch64-standard:2.0
+        ImagePullCredentialsType: CODEBUILD
+        PrivilegedMode: true
+        Type: ARM_CONTAINER
+        EnvironmentVariables:
+          - Name: AWS_ACCOUNT_ID
+            Type: PLAINTEXT
+            Value: !Ref AWS::AccountId
+          - Name: AWS_DEFAULT_REGION
+            Type: PLAINTEXT
+            Value: !Ref AWS::Region
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: arm64-buildspec.yml
+      Cache:
+        Type: NO_CACHE
+      Artifacts: 
+        EncryptionDisabled: false
+        Name: arm64-build
+        Packaging: NONE
+        Type: CODEPIPELINE
+  
+  #4.3 创建codebuild manifest project              
+  ManifestBuildProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: ManifestBuild
+      ServiceRole: !GetAtt CodeBuildServiceRole.Arn
+      Environment:
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/amazonlinux2-x86_64-standard:4.0
+        ImagePullCredentialsType: CODEBUILD
+        PrivilegedMode: true
+        Type: LINUX_CONTAINER
+        EnvironmentVariables:
+          - Name: AWS_ACCOUNT_ID
+            Type: PLAINTEXT
+            Value: !Ref AWS::AccountId
+          - Name: AWS_DEFAULT_REGION
+            Type: PLAINTEXT
+            Value: !Ref AWS::Region
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: manifest-buildspec.yml
+      Cache:
+        Type: NO_CACHE
+      Artifacts: 
+        EncryptionDisabled: false
+        Name: manifest-build
+        Packaging: "NONE"
+        Type: "CODEPIPELINE"
+
+  #5.创建codepipeline service role              
+  CodePipelineServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: CodePipeline-ServiceRole
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codepipeline.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: codepipeline-service
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Effect: Allow
+                Action:
+                  - codecommit:CancelUploadArchive
+                  - codecommit:GetBranch
+                  - codecommit:GetCommit
+                  - codecommit:GetRepository
+                  - codecommit:GetUploadArchiveStatus
+                  - codecommit:UploadArchive
+                Resource: '*'
+              - Effect: Allow 
+                Action:
+                  - codebuild:BatchGetBuilds
+                  - codebuild:StartBuild
+                  - codebuild:StopBuild 
+                Resource: !GetAtt DockerBuildX86Project.Arn
+              - Effect: Allow
+                Action:
+                  - codebuild:BatchGetBuilds
+                  - codebuild:StartBuild
+                  - codebuild:StopBuild 
+                Resource: !GetAtt DockerBuildARM64Project.Arn
+              - Effect: Allow
+                Action:
+                  - codebuild:BatchGetBuilds
+                  - codebuild:StartBuild
+                  - codebuild:StopBuild 
+                Resource: !GetAtt ManifestBuildProject.Arn
+              - Effect: Allow
+                Action:
+                  - 'iam:PassRole'
+                Resource: '*'
+              - Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:GetBucketAcl
+                  - s3:GetBucketLocation
+                Effect: Allow
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - 'elasticbeanstalk:*'
+                  - 'ec2:*'
+                  - 'elasticloadbalancing:*'
+                  - 'autoscaling:*'
+                  - 'cloudwatch:*'
+                  - 's3:*'
+                  - 'sns:*'
+                  - 'cloudformation:*'
+                  - 'rds:*'
+                  - 'sqs:*'
+                  - 'ecs:*'
+                Resource: '*'
+
+
+#6.create s3 bucket as artifact store
+  ArtifactStoreBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      VersioningConfiguration:
+        Status: Enabled
+
+  #7.创建 codepipeline
+  Pipeline:
+    DependsOn:
+        - DockerBuildX86Project
+        - DockerBuildARM64Project
+        - ManifestBuildProject
+        - CodePipelineServiceRole
+        - ArtifactStoreBucket
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: !Ref 'PipelineName'
+      RoleArn: !GetAtt CodePipelineServiceRole.Arn
+      ArtifactStore: 
+        Location: !Ref 'ArtifactStoreBucket'
+        Type: S3
+      Stages: 
+        - Name: Source
+          Actions:
+            - Name: SourceAction
+              RunOrder: '1'
+              ActionTypeId:
+                Category: Source 
+                Owner: AWS
+                Provider: CodeCommit
+                Version: '1'
+              Configuration:
+                RepositoryName: codecommit-Repo
+                BranchName: !Ref 'BrancherName'
+              #  OutputArtifactFormat: "CODEBUILD_CLONE_REF"
+                PollForSourceChanges: "false"
+              OutputArtifacts:
+                - Name: SourceOutput
+              
+        - Name: DockerBuild
+          Actions:
+            - Name: DockerBuildX86
+              RunOrder: '1'
+              ActionTypeId: 
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: '1'
+              Configuration:
+                ProjectName: !Ref DockerBuildX86Project
+              InputArtifacts:
+                - Name: SourceOutput
+              OutputArtifacts:
+                - Name: X86BuildOutput
+                
+            - Name: DockerBuildARM64
+              RunOrder: '1'
+              ActionTypeId:
+                Category: Build 
+                Owner: AWS
+                Provider: CodeBuild
+                Version: '1'
+              Configuration:
+                ProjectName: !Ref DockerBuildARM64Project
+              InputArtifacts: 
+                - Name: SourceOutput
+              OutputArtifacts:
+                - Name: ARM64BuildOutput
+              
+        - Name: Manifest
+          Actions:
+            - Name: BuildManifest
+              RunOrder: '1'
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: '1'
+              Configuration:
+                ProjectName: !Ref ManifestBuildProject
+              InputArtifacts:
+                - Name: SourceOutput
+              OutputArtifacts:
+                - Name: ManifestOutput
+
+Outputs:
+  ApplicationRepositoryCloneURL:
+    Description: Git clone URL for the application code repository
+    Value: !GetAtt ApplicationRepository.CloneUrlHttp
